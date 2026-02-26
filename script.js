@@ -120,9 +120,26 @@
     setTimeout(()=>{ toast.style.animation='slideIn 0.3s ease-out reverse'; setTimeout(()=>toast.remove(), 300); }, 3000);
   }
 
+  function getKnownProducts(){
+    const local = (typeof productsData !== 'undefined' && Array.isArray(productsData)) ? productsData : [];
+    const dynamic = Array.isArray(window.__dynamicProductsData) ? window.__dynamicProductsData : [];
+    return dynamic.length ? dynamic : local;
+  }
+
+  async function resolveProductById(id){
+    const list = getKnownProducts();
+    const fromList = list.find(x => String(x.id) === String(id));
+    if(fromList) return fromList;
+    try{
+      return await fetchJSON('/api/products/' + encodeURIComponent(id));
+    }catch(err){
+      return null;
+    }
+  }
+
   window.addToCart = async function(id){
     try{
-      const p = (typeof productsData !== 'undefined') ? productsData.find(x=>x.id===id) : null;
+      const p = await resolveProductById(id);
       await fetchJSON('/api/cart/add', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id: p ? p.id : id, title: p ? p.title : 'Item', price: p ? p.price : 0, qty: 1 }) });
       await syncCartBadge();
       showNotification('Item added to cart', 'success');
@@ -133,7 +150,7 @@
 
   window.addToWishlist = async function(id){
     try{
-      const p = (typeof productsData !== 'undefined') ? productsData.find(x=>x.id===id) : null;
+      const p = await resolveProductById(id);
       if(!p){ showNotification('Product not found', 'error'); return; }
       await fetchJSON('/api/wishlist/add', {
         method: 'POST',
@@ -151,11 +168,86 @@
     }
   }
 
+  async function syncCategoryCatalogFromApi(){
+    const page = (window.location.pathname.split('/').pop() || '').toLowerCase();
+    const categoryByPage = {
+      'men.html': 'men',
+      'women.html': 'women',
+      'kids.html': 'kids',
+      'footwear.html': 'footwear',
+      'men-tshirt.html': 'men-tshirt',
+      'men-shirt.html': 'men-shirt',
+      'men-denim.html': 'men-denim',
+      'women-tshirt.html': 'women-tshirt',
+      'women-kurta.html': 'women-kurta',
+      'women-hoodie.html': 'women-hoodie',
+      'women-denim.html': 'women-denim',
+      'women-pant.html': 'women-pant',
+      'kids-boys-top.html': 'kids-boys-top',
+      'kids-boys-bottom.html': 'kids-boys-bottom',
+      'kids-girls-top.html': 'kids-girls-top',
+      'kids-girls-bottom.html': 'kids-girls-bottom',
+      'footwear-mens.html': 'footwear-mens',
+      'footwear-womens.html': 'footwear-womens',
+      'footwear-kids.html': 'footwear-kids'
+    };
+    const category = categoryByPage[page];
+    const container = document.getElementById('products');
+    if(!category || !container) return;
+
+    let list = [];
+    try{
+      list = await fetchJSON('/api/products?category=' + encodeURIComponent(category));
+      if(!Array.isArray(list)) list = [];
+    }catch(err){
+      list = [];
+    }
+    window.__dynamicProductsData = list;
+
+    const render = (items) => {
+      container.innerHTML = '';
+      if(!items.length){
+        container.innerHTML = '<div class="muted">No products in this category right now.</div>';
+        return;
+      }
+      items.forEach(p => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+          <img src="${p.img || ''}" alt="${p.title || 'Product'}" />
+          <h3>${p.title || 'Untitled Product'}</h3>
+          <div class="muted">Free shipping</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+            <div class="price">Rs ${Number(p.price) || 0}</div>
+            <div class="actions">
+              <button class="btn btn-primary" onclick="addToCart(${JSON.stringify(p.id)})">Add</button>
+            </div>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    };
+
+    render(list);
+
+    const oldSearch = document.getElementById('searchInput');
+    if(oldSearch){
+      const newSearch = oldSearch.cloneNode(true);
+      oldSearch.parentNode.replaceChild(newSearch, oldSearch);
+      newSearch.addEventListener('input', (e) => {
+        const q = e.target.value.trim().toLowerCase();
+        if(!q) render(list);
+        else render(list.filter(p => String(p.title || '').toLowerCase().includes(q)));
+      });
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', ()=>{
     const btn = document.getElementById('cartBtn');
     if(btn) btn.addEventListener('click', ()=>{ window.location.href = '/cart.html' });
     setupResponsiveHeader();
     syncCartBadge();
+    syncCategoryCatalogFromApi();
   });
   // Create a shared backdrop once
   function ensureSharedBackdrop(){
